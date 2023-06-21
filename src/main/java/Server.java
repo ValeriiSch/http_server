@@ -1,9 +1,7 @@
-import java.io.BufferedOutputStream;
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
@@ -13,7 +11,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+
 
 public class Server {
     private final int portNumber;
@@ -37,45 +35,46 @@ public class Server {
                 executorService.execute(() -> serverProcessing(socket));
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            throw new RuntimeException(e);
         }
     }
 
     public void serverProcessing(Socket serverSocket) {
-        try (final var in = new BufferedReader(new InputStreamReader(serverSocket.getInputStream()));
-             final var out = new BufferedOutputStream(serverSocket.getOutputStream())) {
-            // read only request line for simplicity //строка запроса только для чтения, для простоты
-            // must be in form GET /path HTTP/1.1 //должен быть в формате GET /путь HTTP/1.1
-            final var requestLine = in.readLine();
-            final var parts = requestLine.split(" ");
-
-            if (parts.length != 3) {
-                // just close socket
-                serverSocket.close();
-                return;
-            }
-
-            String method = parts[0];
-            final String path = parts[1];
-            Request request = new Request(method, path);
-
+        try (final var in = new BufferedInputStream(serverSocket.getInputStream());
+             final var out = new BufferedOutputStream(serverSocket.getOutputStream())
+        ) {
+            Request request = Request.createRequest(in);
             if (request == null || !handlers.containsKey(request.getMethod())) {
-                responseNotValid(out, "404", "Not found");
+                responseNotValid(out, "400", "Bad request");
+            } else {
+                printRequestInformation(request);
             }
 
             Map<String, Handler> handlerMap = handlers.get(request.getMethod());
-            if (handlerMap.containsKey(request.getPath())) {
-                Handler handler = handlerMap.get(request.getPath());
+            String requestPath = request.getPath().split("\\?")[0];
+            if (handlerMap.containsKey(requestPath)) {
+                Handler handler = handlerMap.get(requestPath);
                 handler.handle(request, out);
             } else {
-                if (!validPaths.contains(request.getPath())) {
+                if (!validPaths.contains(requestPath)) {
                     responseNotValid(out, "404", "Not found");
                 } else {
-                    defaultHandler(out, path);
+                    defaultHandler(out, requestPath);
                 }
             }
-        } catch (IOException e) {
-            e.printStackTrace();
+        } catch (IOException | URISyntaxException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private void printRequestInformation(Request request) {
+        System.out.println("Request information: ");
+        System.out.println("requestMethod: " + request.getMethod());
+        System.out.println("requestPath: " + request.getPath());
+        System.out.println("requestHeaders: " + request.getHeaders());
+        System.out.println("requestParams:");
+        for (var para : request.getQueryParams()) {
+            System.out.println(para.getName() + " = " + para.getValue());
         }
     }
 
